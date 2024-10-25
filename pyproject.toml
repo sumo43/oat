@@ -3,13 +3,12 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "oalign"
+name = "oat-llm"
 dynamic = ["version"]
-description = 'Online LLM Alignment'
+description = 'Online AlignmenT (OAT) for LLMs.'
 readme = "README.md"
-requires-python = ">=3.8"
-license = "MIT"
-keywords = []
+requires-python = ">=3.10"
+keywords = ["rlhf", "llm", "ai-alignment", "rl", "bandit", "ai", "sample-efficiency"]
 authors = [
   { name = "Zichen Liu", email = "liuzc@sea.com" },
   { name = "Changyu Chen", email = "chency@sea.com" },
@@ -17,42 +16,87 @@ authors = [
 classifiers = [
   "Development Status :: 4 - Beta",
   "Programming Language :: Python",
-  "Programming Language :: Python :: 3.8",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: Implementation :: CPython",
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
-dependencies = []
+dependencies = [
+  "accelerate",
+  "bitsandbytes",
+  "datasets",
+  "deepspeed==0.15.0",
+  "dm-launchpad[tensorflow]",
+  "einops",
+  "flash-attn==2.6.3",
+  "httpx",
+  "jsonlines",
+  "llm-blender==0.0.2",
+  "loralib",
+  "ml_collections",
+  "mosec",
+  "msgspec",
+  "optimum",
+  "packaging",
+  "peft",
+  "protobuf==3.20.0",
+  "pyarrow>=0.6.1,<12",
+  "python-Levenshtein==0.25.1",
+  "scipy",
+  "torchmetrics",
+  "tqdm",
+  "transformers==4.45.2",
+  "transformers_stream_generator",
+  "vllm==0.6.2",
+  "wandb",
+  "wheel",
+]
+
+[packages]
+include = "oat" 
+from = "oat"
+
 
 [project.urls]
-Documentation = "https://github.com/sail-sg/online-align#readme"
-Issues = "https://github.com/sail-sg/online-align/issues"
-Source = "https://github.com/sail-sg/online-align"
+Documentation = "https://github.com/sail-sg/oat#readme"
+Issues = "https://github.com/sail-sg/oat/issues"
+Source = "https://github.com/sail-sg/oat"
+
+[project.license]
+text = "Apache-2.0"
 
 [tool.hatch.version]
-path = "oalign/__about__.py"
+path = "oat/__about__.py"
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "/.github",
+  "/examples",
+  "/k8s",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/foo"]
 
 [tool.hatch.envs.types]
 extra-dependencies = [
   "mypy>=1.0.0",
 ]
 [tool.hatch.envs.types.scripts]
-check = "mypy --install-types --non-interactive {args:oalign tests}"
+check = "mypy --install-types --non-interactive {args:oat tests}"
 
 [tool.coverage.run]
-source_pkgs = ["oalign", "tests"]
+source_pkgs = ["oat", "tests"]
 branch = true
 parallel = true
 omit = [
-  "oalign/__about__.py",
+  "oat/__about__.py",
 ]
 
 [tool.coverage.paths]
-oalign = ["oalign", "*/oalign/oalign"]
-tests = ["tests", "*/oalign/tests"]
+oat = ["oat", "*/oat/oat"]
+tests = ["tests", "*/oat/tests"]
 
 [tool.coverage.report]
 exclude_lines = [
@@ -81,8 +125,9 @@ score = "yes"
 max-args = 7
 
 [tool.pylint.messages_control]
-disable = ["W0108", "W0212", "W1514", "R0902", "R0903", "R0913", "R0914", "R0915", "R1719",
-"R1732", "C0103", "C3001"]
+disable = ["W0201", "W0108", "W0212", "W1514", "R0902", "R0903", "R0913", "R0914", "R0915", "R1719",
+"R1732", "R0801", "C0103", "C3001", "C0116", "W0106", "R0912", "R1702", "W0640", "W1203",
+"R0402"]
 
 [tool.yapf]
 based_on_style = "yapf"
