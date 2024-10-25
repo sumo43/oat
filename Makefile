@@ -1,7 +1,7 @@
 SHELL=/bin/bash
-PROJECT_NAME=oalign
-PROJECT_PATH=oalign/
-LINT_PATHS=${PROJECT_PATH} experiment/
+PROJECT_NAME=oat
+PROJECT_PATH=oat/
+LINT_PATHS=${PROJECT_PATH} examples/ setup.py
 
 check_install = python3 -c "import $(1)" || pip3 install $(1) --upgrade
 check_install_extra = python3 -c "import $(1)" || pip3 install $(2) --upgrade
@@ -29,5 +29,19 @@ check-docstyle:
 	pydocstyle ${PROJECT_PATH} --convention=google
 
 checks: lint check-docstyle
+
+clean:
+	@-rm -rf build/ dist/ .eggs/ site/ *.egg-info .pytest_cache .mypy_cache .ruff_cache
+	@-find . -name '*.pyc' -type f -exec rm -rf {} +
+	@-find . -name '__pycache__' -exec rm -rf {} +
+
+package: clean
+	PRODUCTION_MODE=yes python setup.py bdist_wheel
+
+publish: package
+	twine upload dist/*
+
+addlicense:
+	addlicense -c "Garena Online Private Limited" .
 
 .PHONY: format lint check-docstyle checks
