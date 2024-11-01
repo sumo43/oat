@@ -38,8 +38,7 @@ def get_default_parser():
     parser.add_argument(
         "--total_gpus",
         type=int,
-        choices=[2, 3, 4, 5, 6, 8],
-        default=5,
+        default=8,
     )
     parser.add_argument("--collocate", action="store_true")
     parser.add_argument(
@@ -108,7 +107,9 @@ def get_default_parser():
 
     # Oracle
     parser.add_argument("--reward_oracle", type=str, default="pairrm")
+    parser.add_argument("--reward_oracle_batch_size", type=int, default=1)
     parser.add_argument("--remote_rm_url", type=str, default="")
+    parser.add_argument("--remote_rm_client_workers", type=int, default=4)
     parser.add_argument("--bt_sample", action="store_true")
 
     ## Epistemic reward model
@@ -184,12 +185,12 @@ def get_default_parser():
     parser.add_argument("--logging_steps", type=int, default=1)
     parser.add_argument("--num_prompt_epoch", type=int, default=1)
     parser.add_argument("--micro_train_batch_size", type=int, default=1)
-    parser.add_argument("--train_batch_size", type=int, default=32)
-    parser.add_argument("--rollout_batch_size", type=int, default=32)
-    parser.add_argument("--micro_rollout_batch_size", type=int, default=8)
+    parser.add_argument("--train_batch_size", type=int, default=128)
+    parser.add_argument("--rollout_batch_size", type=int, default=128)
+    parser.add_argument("--micro_rollout_batch_size", type=int, default=16)
+    parser.add_argument("--micro_pi_buffer_maxlen", type=int, default=16)
     parser.add_argument("--max_epochs", type=int, default=1)
     parser.add_argument("--max_sgd_steps", type=int, default=999999999)
-    parser.add_argument("--micro_pi_buffer_maxlen", type=int, default=8)
     parser.add_argument("--r_buffer_maxlen", type=int, default=50000)
     parser.add_argument("--prompt_max_length", type=int, default=1024)
     parser.add_argument("--max_step_adjustment", type=float, default=1)
@@ -231,7 +232,7 @@ def get_default_parser():
     parser.add_argument("--use_wandb", type=str, default=None)
     parser.add_argument("--wandb_org", type=str, default=None)
     parser.add_argument("--wandb_group", type=str, default=None)
-    parser.add_argument("--wandb_project", type=str, default="online_align")
+    parser.add_argument("--wandb_project", type=str, default="oat-llm")
     parser.add_argument(
         "--wandb_run_name",
         type=str,
@@ -258,6 +259,11 @@ def default_args_validation(args: argparse.Namespace):
     if args.rm_train_budget == -1:
         args.rm_train_budget = math.inf
     args.max_queries = max(args.max_queries, args.max_train)
+    args.max_model_len = (
+        args.prompt_max_length
+        + max(args.generate_max_length, args.eval_generate_max_length)
+        + 128
+    )
     gpu_available = torch.cuda.device_count()
     assert (
         gpu_available >= args.total_gpus

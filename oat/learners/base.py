@@ -209,6 +209,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         self.query_step = 0
         self.prompt_consumed = 0
         self.prompt_epoch = 0
+        self.gradient_update_elapse = np.nan
 
         # Log summary of the learner
         strategy.print(self.model)
@@ -333,6 +334,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             self.eval_and_log({}, eval=True)
 
         self.steps = 1
+        self.gradient_update_st = time.time()
         for p_ep in range(self.args.num_prompt_epoch):
             if isinstance(self.prompts_dataloader.sampler, DistributedSampler):
                 self.prompts_dataloader.sampler.set_epoch(p_ep)
@@ -465,7 +467,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 self.global_step += 1
                 if self.global_step % self.strategy.accumulated_gradient == 0:
                     learn_batch_time.append(time.time() - st)
+                    self.gradient_update_elapse = time.time() - self.gradient_update_st
                     st = time.time()
+                    self.gradient_update_st = time.time()
                     self.policy_sgd_step += 1
                     local_sgd_steps += 1
 
@@ -504,6 +508,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             "elapse": time.time() - self.start_time,
             "update_interval": self.update_interval,
             "prompt_epoch": self.prompt_epoch,
+            "gradient_update_elapse": self.gradient_update_elapse,
         }
 
     def get_current_query(self):
