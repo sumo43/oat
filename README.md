@@ -31,7 +31,7 @@ Oat 🌾 is a simple yet efficient system for running online LLM alignment algor
 
 LLM alignment is essentially an online learning and decision making problem where the **agent** (e.g., the LLM policy with an optional built-in reward model) interacts with the **environment** (i.e., humans) to achieve either of the two distinct objectives: minimizing cumulative regret in the *Explore & Exploit* setting or minimizing anytime regret in the *Best Arm Identification* setting.
 
-In our [paper](https://arxiv.org/abs/2411.01493), we formalize LLM alignment as a **contextual dueling bandits (CDB)** problem (see illustration below) and propose a sample-efficient alignment approach based on Thompson sampling.
+In our [paper](https://arxiv.org/abs/2411.01493), we formalize LLM alignment as a **contextual dueling bandit (CDB)** problem (see illustration below) and propose a sample-efficient alignment approach based on Thompson sampling.
 
 <p align="center">
   <img src="https://gist.githubusercontent.com/lkevinzc/98afee30a5141d7068a0b35a88901a31/raw/e0da719024bdc16fb4a993a8405e15cb0cf2b53a/interface.png" height="160"/>
@@ -49,11 +49,11 @@ For more details, please check out our [paper](https://arxiv.org/abs/2411.01493)
 
 ## Installation
 In a python environment with supported versions (`>=3.8, <=3.10`), you could install oat via PyPI:
-```console
+```shell
 pip install vllm==0.6.2 && pip install oat-llm
 ```
 Or you could also install in "editable" mode for local development:
-```console
+```shell
 git clone git@github.com:sail-sg/oat.git
 cd oat
 pip install vllm==0.6.2 && pip install -e .
@@ -137,7 +137,7 @@ Check out this [tutorial](./examples/) for more examples covering:
 * Additional LLM exploration algorithms, e.g., APL, XPO, and EE4LLM.
 
 ## Benchmarking
-Our system benchmarking compares oat with the online DPO implementation from [huggingface/trl](https://huggingface.co/docs/trl/main/en/online_dpo_trainer). Below, we outline the configurations used for oat and present the benchmarking results.
+The benchmarking compares oat with the online DPO implementation from [huggingface/trl](https://huggingface.co/docs/trl/main/en/online_dpo_trainer). Below, we outline the configurations used for oat and present the benchmarking results. Notably, oat 🌾 achieves up to **2.5x** computational efficiency compared to trl 🤗.
 
 <p align="center">
   <img src="https://gist.githubusercontent.com/lkevinzc/98afee30a5141d7068a0b35a88901a31/raw/e23f40d33e8a2fa4220e8122c152b356084b8afb/system_configs.png" height="320"/>
