@@ -50,6 +50,7 @@ class APLActor(actor.Actor):
             prompts, sampling_params=self.sampling_params, use_tqdm=False
         )
 
+        ent_filtered_indices = None
         if not self.args.apl_pref_certainty_only:
             # Predictive entropy estimation.
             entropy_estimations = []
@@ -60,7 +61,7 @@ class APLActor(actor.Actor):
                 entropy /= len(output.outputs)
                 entropy_estimations.append(entropy)
             ent_filtered_indices = np.argsort(entropy_estimations)[
-                -self.args.micro_pi_buffer_maxlen :
+                -self.args.pi_buffer_maxlen_per_device :
             ]  # Online and on-policy; as stated in their Appendix D.
             outputs = [outputs[i] for i in ent_filtered_indices]
 
@@ -195,7 +196,7 @@ class APLLearner(DAPLearner):
                             self.ref_model,
                             self.tokenizer,
                             outputs,
-                            self.args.micro_pi_buffer_maxlen,
+                            self.args.pi_buffer_maxlen_per_device,
                         )
                     )
                 output_info2 = f"({len(processed_prompts)},{len(candidates[0])})"
