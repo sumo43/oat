@@ -19,7 +19,7 @@ Oat 🌾 is a simple yet efficient system for running online LLM alignment algor
   * `Actor`: Utilizes [vLLM](https://github.com/vllm-project/vllm) for accelerated online response sampling.
   * `Learner`: Leverages [DeepSpeed](https://github.com/microsoft/DeepSpeed) ZeRO strategies to enhance memory efficiency.
   * `Oracle`: Hosted by [Mosec](https://github.com/mosecorg/mosec) as a remote service, supporting dynamic batching, data parallelism and pipeline parallelism.
-* **Simplified Workflow**: Oat simplifies the experimental pipeline of LLM alignment. With an `Oracle` served online, we can flexibly query it for preference data labeling as well as anytime model evaluation. All you need is to launch experiments and monitor real-time learning curves (e.g., win rate) on [wandb](https://wandb.ai/lkevinzc/oat-llm) — no need for manual training, checkpointing and loading for evaluation.
+* **Simplified Workflow**: Oat simplifies the experimental pipeline of LLM alignment. With an `Oracle` served online, we can flexibly query it for preference data labeling as well as anytime model evaluation. All you need is to launch experiments and monitor real-time learning curves (e.g., win rate) on wandb (see [reproduced results](https://wandb.ai/lkevinzc/oat-llm)) — no need for manual training, checkpointing and loading for evaluation.
 * **Oracle Simulation**: Oat provides simulated preference oracles in various modes.
   * Lightweight reward models run within the actor's process, enabling quick testing on as few as two GPUs.
   * Larger and more capable reward models can be served remotely, harnessing additional compute and memory resources.
@@ -61,13 +61,17 @@ pip install vllm==0.6.2 && pip install -e .
 
 ## Usage
 Below is an example to align a `1-B Pythia` SFT Model on the `tl;dr` dataset using `online SimPO` with `PairRM` as the preference oracle:
+
+> [!WARNING]
+> Aligning with `PairRM` provides a lightweight example setup. For reproducing results from the paper or developing custom online alignment algorithms, we recommend using stronger reward models (or GPT-as-a-judge) as a preference oracle. This approach better approximates the ideal case of a human population. See the [examples](./examples/README.md#preference-oracles).
+
 ```diff
 python -m oat.experiment.main \
     --gpus 2 \
     --collocate \
     --dap-algo SimPO \
     --beta 2 \
-    --reward-oracle pairrm \
+    --preference-oracle pairrm \
     --pretrain trl-lib/pythia-1b-deduped-tldr-sft \
     --prompt-data lkevinzc/tldr-with-sft-reference \
     --output_key pythia-1b-reference \
@@ -78,7 +82,7 @@ python -m oat.experiment.main \
     --use-wb \
     --wb-run-name 1b_pairrm_simpo_online
 ```
-This example completes in **less than two hours on two A100 GPUs**!
+This example completes in **less than two hours on two A100-40G GPUs**!
 
 To run an `offline SimPO` baseline for comparison, we disable weights synchronization from the learner to actors by adjusting the `sync-params-every` argument:
 ```diff
@@ -87,7 +91,7 @@ python -m oat.experiment.main \
     --collocate \
     --dap-algo SimPO \
     --beta 2 \
-    --reward-oracle pairrm \
+    --preference-oracle pairrm \
     --pretrain trl-lib/pythia-1b-deduped-tldr-sft \
     --prompt-data lkevinzc/tldr-with-sft-reference \
     --output_key pythia-1b-reference \
@@ -101,14 +105,14 @@ python -m oat.experiment.main \
 +   --wb-run-name 1b_pairrm_simpo_offline
 ```
 
-Finally, we run `SEA SimPO` (with $\gamma=1$) to verify its capability of sample-efficient alignment. This experiment utilizes 4 GPUs, with a reduced per-device training batch size to accommodate the training of an additional epistemic reward model. The per-device rollout batch size and buffer length are adjusted to ensure a global batch size of 128. Additionally, 10 response candidates are generated for exploration using BAI Thompson sampling.
+Finally, we run `SEA SimPO` (with $\gamma=1$, see [here](https://arxiv.org/pdf/2411.01493#page=7.60) for the meaning of $\gamma$) to verify its capability of sample-efficient alignment. This experiment utilizes 4 GPUs, with a reduced per-device training batch size to accommodate the training of an additional epistemic reward model. The per-device rollout batch size and buffer length are adjusted to ensure a global batch size of 128. Additionally, 10 response candidates are generated for exploration using BAI Thompson sampling.
 ```diff
 python -m oat.experiment.main \
 -   --gpus 2 \
 +   --gpus 4 \
     --dap-algo SimPO \
     --beta 2 \
-    --reward-oracle pairrm \
+    --preference-oracle pairrm \
     --pretrain trl-lib/pythia-1b-deduped-tldr-sft \
     --prompt-data lkevinzc/tldr-with-sft-reference \
     --output_key pythia-1b-reference \
