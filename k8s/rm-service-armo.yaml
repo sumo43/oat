@@ -12,25 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-import launchpad as lp
-
-from oat.args import default_args_validation, get_default_args
-from oat.baselines.xpo import XPOActor, XPOArgs, XPOLearner
-from oat.interface import get_program
-
-
-def run_xpo(args):
-    program, local_resources = get_program(args, XPOLearner, XPOActor)
-    lp.launch(
-        program,
-        launch_type="local_mp",
-        local_resources=local_resources,
-        terminal="current_terminal",
-    )
-
-
-if __name__ == "__main__":
-    args = get_default_args(XPOArgs)
-    args = default_args_validation(args)
-    run_xpo(args)
+apiVersion: v1
+kind: Service
+metadata:
+  # change service-name to a desired hostname, so you can call http://service-name by other services
+  name: remote-rm-armo 
+spec:
+  type: ClusterIP
+  selector:
+    rm-server: ArmoRM-Llama3-8B-v0.1 # match the podLabels when creating sailctl job, must be unique
+  ports:
+    - protocol: TCP
+      port: 80         
+      targetPort: 8000 # match the port in the pod container

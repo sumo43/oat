@@ -21,6 +21,7 @@ finally get oracle feedback in actor.
 """
 
 import time
+from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 import launchpad as lp
@@ -33,6 +34,7 @@ from transformers import PreTrainedTokenizer
 from vllm.outputs import RequestOutput
 
 from oat import actor
+from oat.args import OATArgs
 from oat.learners.dap import DAPLearner
 from oat.model import LLM
 from oat.types import Metric, PreferenceData
@@ -40,10 +42,19 @@ from oat.utils.data import zero_pad_sequences
 from oat.utils.ipc import DataID, PlasmaShmClient
 
 
+@dataclass
+class APLArgs(OATArgs):
+    """Active preference learning arguments."""
+
+    # Fig 2b and Fig 5 both show this variant is better than random,
+    # while Fig 2b shows the learning is not robust with entropy.
+    apl_pref_certainty_only: bool = False
+
+
 class APLActor(actor.Actor):
     """Sample a large batch and filter with entropy and reward margin."""
 
-    def __init__(self, ipc_server, vllm_args, args: actor.OATArgs) -> None:
+    def __init__(self, ipc_server, vllm_args, args: APLArgs) -> None:
         super().__init__(ipc_server, vllm_args, args)
         self.sampling_params.logprobs = 1
 
@@ -150,7 +161,7 @@ class APLLearner(DAPLearner):
         self.actor_info = {}
 
         if not self.strategy.args.debug:
-            self.eval_and_log({}, eval=True)
+            self.eval_and_log({}, eval=True, save=False)
 
         self.steps = 1
         self.gradient_update_st = time.time()
@@ -250,13 +261,14 @@ class APLLearner(DAPLearner):
                 progress_bar.update()
                 self.steps += 1
 
-        self.eval_and_log(train_info, eval=True)
+        self.eval_and_log(train_info, eval=True, save=True)
 
         if self.strategy.is_rank_0():
             self._wandb.finish()
             lp.stop()
 
 
+@torch.no_grad
 def implicit_reward_filtering_response_only(
     policy_model: LLM,
     ref_model: LLM,
@@ -321,6 +333,7 @@ def implicit_reward_filtering_response_only(
     )
 
 
+@torch.no_grad
 def implicit_reward_filtering_triplet(
     processed_prompts: List[str],
     raw_prompts: List[str],
@@ -401,6 +414,7 @@ def compute_logp(model, prompt_response_ids, prompt_response_masks, prompt_len: 
     )
 
 
+@torch.no_grad
 def get_batch_logps(
     logits: torch.FloatTensor,
     labels: torch.LongTensor,

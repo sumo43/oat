@@ -20,12 +20,11 @@ import socket
 import time
 from collections import deque
 from datetime import datetime
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List
 from warnings import warn
 
 import deepspeed
 import launchpad as lp
-import Levenshtein
 import numpy as np
 import pandas as pd
 import torch
@@ -38,6 +37,7 @@ from transformers.trainer import get_scheduler
 
 from oat.actor import Actor
 from oat.args import OATArgs
+from oat.collectors import AsyncPreferenceCollector, PreferenceCollector
 from oat.model import LLM
 from oat.types import DAPAlgo, PreferenceData
 from oat.utils.data import PreferenceDataset, get_datasets, get_tokenizer
@@ -153,6 +153,12 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             f"num_policy_sgd_steps_per_episodes={num_policy_sgd_steps_per_episodes}; max_steps={max_steps}"
         )
 
+        # preference collector
+        if self.args.asynchronous:
+            self.collector = AsyncPreferenceCollector(self)
+        else:
+            self.collector = PreferenceCollector(self)
+
         # prepare models/optimizers...
         if self.algo != DAPAlgo.SimPO:
             ((self.model, self.optimizer, self.scheduler), self.ref_model) = (
@@ -171,7 +177,8 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
         exp_name = args.wb_run_name + "_" + datetime.now().strftime("%m%dT%H:%M:%S")
         self.save_path = os.path.join(args.save_path, exp_name)
-        os.makedirs(self.save_path, exist_ok=True)
+        if strategy.is_rank_0():
+            os.makedirs(self.save_path, exist_ok=True)
 
         # logger
         self._wandb = None
@@ -271,52 +278,6 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             pin_memory=True,
         )
 
-    def collect_preference(
-        self,
-        prompts: Union[str, List[str]],
-        formatted_prompts: List[str],
-        refs: Union[str, List[str]],
-    ):
-        # generate response & get feedback
-        st_time = time.time()
-        rank = torch.distributed.get_rank()
-        actor = self.actors[rank % len(self.actors)]
-
-        if self.strategy.args.online_evaluation:
-            handle = actor.step(prompts, formatted_prompts, refs)
-        else:
-            handle = actor.step(prompts, formatted_prompts)
-
-        preference_data: List[PreferenceData] = self.ipc_client.deserialize_ipc(handle)
-
-        actor_time = time.time() - st_time
-
-        metric = {
-            "actor/total_time": actor_time,
-            "actor/chosen_avg_str_len": np.mean(
-                [len(p.chosen_response) for p in preference_data]
-            ),
-            "actor/rejected_avg_str_len": np.mean(
-                [len(p.rejected_response) for p in preference_data]
-            ),
-            "actor/init_clash_ratio": np.mean([p.init_clash for p in preference_data]),
-            "actor/same_response_ratio": np.mean([p.same for p in preference_data]),
-            "actor/pair_edit_dist": np.mean(
-                [
-                    Levenshtein.distance(p.chosen_response, p.rejected_response)
-                    for p in preference_data
-                ]
-            ),
-            "actor/chosen_id": np.mean([p.chosen_id for p in preference_data]),
-        }
-
-        mean_info = tree.map_structure(
-            lambda *x: np.mean(x), *[p.info for p in preference_data]
-        )
-        metric.update(mean_info)
-
-        return preference_data, metric
-
     def run(self):
         self._init(self.args, self.actors)
 
@@ -327,7 +288,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         self.actor_info = {}
 
         if not self.strategy.args.debug:
-            self.eval_and_log({}, eval=True)
+            self.eval_and_log({}, eval=True, save=False)
 
         self.steps = 1
         self.gradient_update_st = time.time()
@@ -344,14 +305,21 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             for processed_prompts, raw_prompts, refs in self.prompts_dataloader:
                 if early_stop:
                     break
-                preference_data, self.actor_info = self.collect_preference(
+                preference_data, self.actor_info = self.collector.collect_preference(
                     raw_prompts, processed_prompts, refs
                 )
-                self.prompt_consumed += len(processed_prompts)
+                del raw_prompts, processed_prompts
+
+                if preference_data is None:
+                    # Asynchronous prefilling: only the 1st step.
+                    continue
+                self.prompt_consumed += len(preference_data)
                 self.query_step += np.sum(
                     [not p.is_model_data for p in preference_data]
                 )
-                self.process_preference_data(preference_data, raw_prompts)
+                self.process_preference_data(
+                    preference_data, [p.prompt for p in preference_data]
+                )
 
                 if self.steps % self.update_interval == 0:
                     train_info = self.preference_learning(
@@ -378,7 +346,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
             self.prompt_epoch = p_ep + 1
 
-        self.eval_and_log(train_info, eval=True)
+        self.eval_and_log(train_info, eval=True, save=True)
 
         if self.args.dump_all_buffer:  # For debug purpose.
             if not self.strategy.is_rank_0():
@@ -510,11 +478,13 @@ class LearnerBase(abc.ABC, DistributedLauncher):
     def get_current_query(self):
         return self.strategy.all_reduce(self.query_step, op="sum")
 
-    def _should_eval(self):
+    def _should_do(self, interval_steps):
+        if interval_steps <= 0:
+            return False
         if not hasattr(self, "_pending_eval"):
             self._pending_eval = False
 
-        do_eval = self.steps % self.args.eval_steps == 0
+        do_eval = self.steps % interval_steps == 0
         if not (do_eval or self._pending_eval):
             return False
         else:
@@ -529,11 +499,24 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             self.last_eval_query_step = self.get_current_query()
             return True
 
-    def eval_and_log(self, train_info, eval=False):
+    def eval_and_log(self, train_info, eval=False, save=False):
         # eval
         eval_info = {}
-        if eval or self._should_eval():
+        if (self.args.eval_steps > 0 and eval) or self._should_do(self.args.eval_steps):
             eval_info = self.evaluate(self.eval_prompts_dataloader, self.steps)
+
+        # save
+        if (self.args.save_steps > 0 and save) or (
+            self.steps > 0 and self._should_do(self.args.save_steps)
+        ):
+            self.strategy.save_model(
+                self.model,
+                self.tokenizer,
+                os.path.join(self.save_path, "saved_models"),
+                tag="step_{:05d}".format(self.steps),
+                max_num=self.args.max_save_num,
+                max_mem=self.args.max_save_mem,
+            )
 
         # logs
         if eval_info or self.steps % self.args.logging_steps == 0:
@@ -617,7 +600,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             pd.DataFrame(
                 {
                     self.eval_input_key: prompts,
-                    self.eval_output_key: responses,
+                    "output": responses,
                     f"format_{self.eval_input_key}": processed_prompts,
                     "reference": references,
                     "generator": self.args.wb_run_name,
@@ -625,6 +608,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             ).to_json(
                 os.path.join(eval_res_path, f"{steps}.json"),
                 orient="records",
+                indent=4,
             )
             win_rate = np.mean(wins).item()
             win_rate_prob = np.mean(win_probs).item()
@@ -648,6 +632,13 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         self.pi_beta_version += 1
 
     def _broadcast_to_vllm(self):
+        if self.args.asynchronous:
+            # Pooling util generation finishes.
+            while True:
+                time.sleep(0.1)
+                actors_busy = [actor.is_generating() for actor in self.actors]
+                if not any(actors_busy):
+                    break
         model = self.model.model.module
         count, num_params = 0, len(list(model.named_parameters()))
         for name, param in model.named_parameters():

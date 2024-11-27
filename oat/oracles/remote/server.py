@@ -37,23 +37,27 @@ MODEL_CONFIGS = {
     "Skywork/Skywork-Reward-Llama-3.1-8B": {
         "attn_implementation": "flash_attention_2",
         "num_labels": 1,
-    }
+    },
+    "Skywork/Skywork-Reward-Llama-3.1-8B-v0.2": {
+        "attn_implementation": "flash_attention_2",
+        "num_labels": 1,
+    },
 }
 
 
 class RewardModel(TypedMsgPackMixin, Worker):
     def __init__(self):
         super().__init__()
-        model_name = os.environ.get("RM_MODEL_NAME")
-        configs = MODEL_CONFIGS.get(model_name, {})
+        self.model_name = os.environ.get("RM_MODEL_NAME")
+        configs = MODEL_CONFIGS.get(self.model_name, {})
         self.model = AutoModelForSequenceClassification.from_pretrained(
-            model_name,
+            self.model_name,
             device_map="auto",
             trust_remote_code=True,
             torch_dtype=torch.bfloat16,
             **configs,
         )
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         self.example = Request(
             batch_prompt=[
                 "What is the range of the numeric output of a sigmoid node in a neural network?"
@@ -89,7 +93,7 @@ class RewardModel(TypedMsgPackMixin, Worker):
             self.model.device
         )
         with torch.no_grad():
-            logits = self.model(**pair).logits.cpu().squeeze()
+            logits = self.model(**pair).logits.cpu().float().squeeze()
         batch_scores_1 = logits[:num_data]
         batch_scores_2 = logits[num_data:]
         # Apply BT model.
@@ -101,7 +105,7 @@ class RewardModel(TypedMsgPackMixin, Worker):
 
 @dataclass
 class ServerArgs:
-    remote_rm_model: str = "Skywork/Skywork-Reward-Llama-3.1-8B"
+    remote_rm_model: str = "Skywork/Skywork-Reward-Llama-3.1-8B-v0.2"
     max_wait_time: int = 10
     cuda_devices: str = "all"
 

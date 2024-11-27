@@ -38,7 +38,8 @@ class Actor:
     def __init__(self, ipc_server, vllm_args, args: OATArgs) -> None:
         self.args = args
         self.eval_mode = False
-        self.pi_beta_weights = None
+        self.generate_mode = False
+
         # Measuring the **online** performance
         self.enable_online_evaluation = args.online_evaluation
 
@@ -85,9 +86,9 @@ class Actor:
         # ###################################
         self.learning_rm = False
         if args.exp_method == "no":
-            if self.sampling_params.n == 2:
+            if self.sampling_params.n > 2:
                 logging.warn(
-                    f"trying to sample {self.sampling_params.n} responses but"
+                    f"trying to sample {self.sampling_params.n} responses but "
                     "no selection mechanism is provided"
                 )
         else:
@@ -133,9 +134,11 @@ class Actor:
         )
 
     def generate(self, prompts: List[str], sampling_params: vllm.SamplingParams):
+        self.generate_mode = True
         outputs = self.llm.generate(
             prompts, sampling_params=sampling_params, use_tqdm=False
         )
+        self.generate_mode = False
         candidates = {}
         for i in range(len(outputs)):
             # for each prompt
@@ -328,6 +331,9 @@ class Actor:
             )
         )
 
+    def is_generating(self):
+        return self.generate_mode
+
     def update_weight(self, name, dtype, shape, empty_cache=False):
         self._stop_remote_worker_execution_loop()
         return self.llm.llm_engine.model_executor.driver_worker.update_weight(
@@ -343,9 +349,10 @@ class Actor:
         model.default_weight_loader(params_dict[name], weight)
         del weight
 
-    def notify_eval_start(self):
+    def notify_eval_start(self, eval=True):
         """Temporarily cache the current behavior policy weights to CPU."""
-        self.eval_mode = True
+        if eval:
+            self.eval_mode = True
         logging.debug("Start offloading...")
         st = time.time()
         self.cache_model_state = tree.map_structure(
@@ -353,13 +360,16 @@ class Actor:
         )
         logging.debug(f"Finished offloading in {time.time() - st} seconds")
 
-    def notify_eval_done(self):
-        assert self.eval_mode
+    def notify_eval_done(self, eval=True):
+        """Load cached behavior policy weights to GPU."""
+        if eval:
+            assert self.eval_mode
         logging.debug("Start loading from cpu...")
         st = time.time()
         self.model.load_state_dict(self.cache_model_state)
         logging.debug(f"Finished loading in {time.time() - st} seconds")
-        self.eval_mode = False
+        if eval:
+            self.eval_mode = False
 
     def _stop_remote_worker_execution_loop(self):
         # Fix error for using 2 communication group
