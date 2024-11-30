@@ -125,7 +125,7 @@ class DAPLearner(LearnerBase):
                 input_ids,
                 att_masks,
                 prompt_id_lens,
-                average_log_prob=self.algo in [DAPAlgo.SimPO, DAPAlgo.IPO],
+                average_log_prob=self.algo in [DAPAlgo.SimPO, DAPAlgo.IPO, DAPAlgo.LR_DPO],
             )
             chosen_logps = all_logps[: chosen_ids.shape[0]]
             rejected_logps = all_logps[chosen_ids.shape[0] :]
@@ -215,8 +215,13 @@ class DAPLearner(LearnerBase):
 
         if self.algo != DAPAlgo.BNF:
 
+            if self.algo == DAPAlgo.LR_DPO:
+                length = torch.min(loss_masks.sum(-1))
+            else:
+                length = loss_masks.sum(-1)
+            
             if average_log_prob:
-                return (target_logps * loss_masks).sum(-1) / loss_masks.sum(-1)
+                return (target_logps * loss_masks).sum(-1) / length
             else:
                 return (target_logps * loss_masks).sum(-1)
             
