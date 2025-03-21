@@ -14,7 +14,7 @@
 """Argument parsing."""
 import math
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 
 import torch
 import tyro
@@ -33,8 +33,14 @@ class OATArgs:
     gpus: int = 8
     # Ratio of pre-allocated GPU memory for vLLM.
     vllm_gpu_ratio: float = 0.25
+    # Max model length.
+    max_model_len: Optional[int] = None
+    # Enable vLLM prefix caching.
+    enable_prefix_caching: bool = False
     # Actor-learner collocation.
     collocate: bool = False
+    # Offload vLLM weights & discard KV cache to collocate larger models.
+    vllm_sleep: bool = False
     # Size of Plasma shared memory.
     shm_size_mb: int = 5000
     # Asynchronous training.
@@ -84,7 +90,7 @@ class OATArgs:
     bt_sample: bool = False
 
     # Critic.
-    critic_type: Literal["ppo", "grpo"] = "ppo"
+    critic_type: Literal["ppo", "grpo", "drgrpo"] = "drgrpo"
 
     # Epistemic reward model (for exploration).
     num_ensemble: int = 20
@@ -164,6 +170,7 @@ class OATArgs:
     """Training specs."""
     save_path: str = "./oat-output"
     save_steps: int = -1
+    save_from: int = 0
     max_save_num: int = 5
     max_save_mem: int = 1000
     logging_steps: int = 1
@@ -181,6 +188,7 @@ class OATArgs:
     critic_max_step_adjustment: float = 1
     buffer_clear_every: float = math.inf
     dump_all_buffer: bool = False
+    dump_replay_every: int = -1
 
     max_norm: float = 1.0
     adam_beta_1: float = 0.9
@@ -196,7 +204,9 @@ class OATArgs:
     ref_offload: bool = False
     learning_rate: float = 5e-7
     critic_learning_rate: float = 9e-6
-    lr_scheduler: str = "cosine_with_min_lr"
+    lr_scheduler: Literal["cosine_with_min_lr", "polynomial", "constant"] = (
+        "cosine_with_min_lr"
+    )
     lr_warmup_ratio: float = 0.03
     zpg: int = 1
     adam_offload: bool = False
@@ -263,11 +273,6 @@ def default_args_validation(args: OATArgs):
         args.max_queries = args.max_train
     if args.asynchronous:
         assert not args.collocate, "async training needs to disable collocation"
-    args.max_model_len = (
-        args.prompt_max_length
-        + max(args.generate_max_length, args.eval_generate_max_length)
-        + 128
-    )
     gpu_available = torch.cuda.device_count()
     assert (
         gpu_available >= args.gpus

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import abc
+import logging
 import math
 import os
 import socket
@@ -20,7 +21,6 @@ import time
 from collections import deque
 from datetime import datetime
 from typing import Any, Dict, List, Tuple, Union
-from warnings import warn
 
 import deepspeed
 import launchpad as lp
@@ -29,7 +29,6 @@ import pandas as pd
 import torch
 import torch.distributed as dist
 import tree
-import vllm
 from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
 from transformers.trainer import get_scheduler
@@ -139,7 +138,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         max_steps_to_schedule = self.max_steps * args.max_step_adjustment
 
         scheduler_specific_kwargs = {}
-        if args.lr_scheduler not in ["polynomial"]:
+        if args.lr_scheduler in ["cosine_with_min_lr"]:
             scheduler_specific_kwargs["min_lr"] = args.learning_rate * 0.1
         self.scheduler = get_scheduler(
             args.lr_scheduler,
@@ -200,6 +199,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         self.prompt_consumed = 0
         self.prompt_epoch = 0
         self.gradient_update_elapse = np.nan
+        self.weight_sync_elapse = np.nan
+        self.vllm_wake_up_time = 0
+        self.vllm_go_sleep_time = 0
 
         # Log summary of the learner
         strategy.print(self.model)
@@ -215,16 +217,13 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         # For ZeRO-3:
         #   1. AllGather parameters to rank 0
         #   2. Broadcast parameters from rank 0 to all vllm engines
+        backend = "gloo" if self.args.collocate else "nccl"
         if actors and strategy.is_rank_0():
             master_addr = node_ip_address_from_perspective()
             with socket.socket() as sock:
                 sock.bind(("", 0))
                 master_port = sock.getsockname()[1]
             world_size = len(actors) + 1
-            backend = "nccl"
-            if vllm.__version__ > "0.4.2":
-                backend = "gloo"
-                warn(f"Using gloo backend for vLLM version {vllm.__version__}")
             futs = [
                 actor.futures.init_process_group(
                     master_addr,
@@ -292,10 +291,10 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             for processed_prompts, raw_prompts, refs in self.prompts_dataloader:
                 if early_stop:
                     break
+                # Call actor.step remotely to generate rollout & collect feedback.
                 feedback_data, self.actor_info = self.collector.collect_feedback(
                     raw_prompts, processed_prompts, refs
                 )
-                del raw_prompts, processed_prompts
 
                 if feedback_data is None:
                     # Asynchronous prefilling, data is stored in collector's buffer.
@@ -304,8 +303,26 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
                 self.process_feedback_data(feedback_data)
 
+                if (
+                    self.args.dump_replay_every > 0
+                    and self.steps % self.args.dump_replay_every == 0
+                ):
+                    if not self.strategy.is_rank_0():
+                        dist.gather_object(self.pi_buffer)
+                    else:
+                        gather_all_buffer = [None] * self.strategy.world_size
+                        dist.gather_object(self.pi_buffer, gather_all_buffer)
+                        pd.to_pickle(
+                            (processed_prompts, refs, gather_all_buffer),
+                            os.path.join(
+                                self.save_path, f"buffer_step{self.steps:05}.pkl"
+                            ),
+                        )
+
                 if self.steps % self.update_interval == 0:
+                    self._pre_learning()
                     train_info = self.learn(self.steps // self.update_interval)
+                    self._post_learning()
 
                     self.eval_and_log(train_info)
 
@@ -369,7 +386,6 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         Args:
             logits: Logits of the model (unnormalized). Shape: (batch_size, sequence_length, vocab_size)
             labels: Labels for which to compute the log probabilities. Label tokens with a value of -100 are ignored. Shape: (batch_size, sequence_length)
-            average_log_prob: If True, return the average log probability per (non-masked) token. Otherwise, return the sum of the log probabilities of the (non-masked) tokens.
 
         Returns:
             all_logp: all log prob of shape (batch_size, sequence_length, vocab_size)
@@ -403,10 +419,14 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             "global_step": self.global_step,
             "policy_sgd_step": self.policy_sgd_step,
             "pi_buffer_len": len(self.pi_buffer),
+            "prompt_dataset_len": len(self.prompts_dataset),
             "elapse": time.time() - self.start_time,
             "update_interval": self.update_interval,
             "prompt_epoch": self.prompt_epoch,
             "gradient_update_elapse": self.gradient_update_elapse,
+            "weight_sync_elapse": self.weight_sync_elapse,
+            "vllm_go_sleep_time": self.vllm_go_sleep_time,
+            "vllm_wake_up_time": self.vllm_wake_up_time,
         }
 
     def get_current_query(self):
@@ -441,7 +461,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
         # save
         if (self.args.save_steps > 0 and save) or (
-            self.steps > 0 and self._should_do(self.args.save_steps)
+            self.steps > 0
+            and self._should_do(self.args.save_steps)
+            and self.steps >= self.args.save_from
         ):
             self.strategy.save_model(
                 self.model,
@@ -497,21 +519,24 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
         # 3) Generate and process results
         win_rate = 0
-        win_rate_prob = 0
+        scores = 0
+        accuracy = 0
         response_len = 0
+        eval_count = 0
         if self.strategy.is_rank_0():
             processed_prompts = []
             prompts = []
             responses = []
-            response_lens = []
             references = []
             futs = []
-            win_probs = []
+            scores = []
             wins = []
+            accuracies = []
             progress_bar = tqdm(range(len(dataloader)), desc="Evaluating")
             for i, (batch_processed_prompts, batch_prompts, refs) in enumerate(
                 dataloader
             ):
+                eval_count += len(batch_prompts)
                 processed_prompts.extend(batch_processed_prompts)
                 prompts.extend(batch_prompts)
                 references.extend(refs)
@@ -523,10 +548,11 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 futs.append(fut)
                 if len(futs) == len(self.actors) or i == len(dataloader) - 1:
                     for fut in futs:
-                        resp, win_prob = fut.result()
+                        resp, score = fut.result()
                         responses.extend(resp)
-                        wins.extend(win_prob > 0.5)
-                        win_probs.extend(win_prob)
+                        wins.extend(score > 0.5)  # For preference learning.
+                        accuracies.extend(score == 1)  # For RL with verifiable rewards.
+                        scores.extend(score)
                     futs.clear()
                 progress_bar.update()
 
@@ -536,6 +562,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 {
                     self.eval_input_key: prompts,
                     "output": responses,
+                    "scores": scores,
                     f"format_{self.eval_input_key}": processed_prompts,
                     "reference": references,
                     "generator": self.args.wb_run_name,
@@ -546,39 +573,60 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 indent=4,
             )
             win_rate = np.mean(wins).item()
-            win_rate_prob = np.mean(win_probs).item()
-            response_len = np.mean(tree.map_structure(lambda x: len(x), responses))
+            scores = np.mean(scores).item()
+            accuracy = np.mean(accuracies).item()
+            response_len = np.mean(
+                tree.map_structure(lambda x: len(self.tokenizer.encode(x)), responses)
+            )
+
+        dist.barrier()
 
         win_rate = self.strategy.broadcast(win_rate)
-        win_rate_prob = self.strategy.broadcast(win_rate_prob)
+        scores = self.strategy.broadcast(scores)
+        accuracy = self.strategy.broadcast(accuracy)
         response_len = self.strategy.broadcast(response_len)
+        eval_count = self.strategy.broadcast(eval_count)
 
         # 4) Recover Actors' original behavior policy.
         if self.strategy.is_rank_0():
             done = [actor.futures.notify_eval_done() for actor in self.actors]
             _ = [d.result() for d in done]
 
+        dist.barrier()
         return {
             "eval/rm_win_rate": win_rate,
-            "eval/rm_win_rate_prob": win_rate_prob,
+            "eval/score": scores,
+            "eval/accuracy": accuracy,
+            "eval/eval_count": eval_count,
             "eval/elapse": time.time() - st_time,
-            "eval/response_str_len": response_len,
+            "eval/response_tok_len": response_len,
         }
 
     def sync_params_to_actors(self):
+        st = time.time()
         self._broadcast_to_vllm()
         self.pi_beta_version += 1
+        self.weight_sync_elapse = time.time() - st
 
     def _broadcast_to_vllm(self):
+        dist.barrier()
         if self.args.asynchronous:
-            # Pooling util generation finishes.
+            # Pooling until generation finishes.
             while True:
                 time.sleep(0.1)
                 actors_busy = [actor.is_generating() for actor in self.actors]
                 if not any(actors_busy):
                     break
+
+        reset_prefix_cache_futs = []
+        if self.args.enable_prefix_caching and self.strategy.is_rank_0():
+            reset_prefix_cache_futs = [
+                actor.futures.reset_prefix_cache() for actor in self.actors
+            ]
+
         model = self.model.model.module
         count, num_params = 0, len(list(model.named_parameters()))
+        torch.cuda.empty_cache()
         for name, param in model.named_parameters():
             count += 1  # empty_cache at last param
 
@@ -606,3 +654,32 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 if self.strategy.is_rank_0():
                     dist.broadcast(param.data, 0, group=self._model_update_group)
                     _ = [fut.result() for fut in futs]
+
+        if reset_prefix_cache_futs:
+            _ = [fut.result() for fut in reset_prefix_cache_futs]
+        torch.cuda.empty_cache()
+        dist.barrier()
+        logging.info(f"weights @version={self.pi_beta_version} broadcasted to actors")
+
+    def _post_learning(self):
+        if self.args.vllm_sleep:
+            # Wake up vLLM after training.
+            st = time.time()
+            dist.barrier()
+            torch.cuda.synchronize()
+            if self.strategy.is_rank_0():
+                futs = [actor.futures.wake_up() for actor in self.actors]
+                _ = [fut.result() for fut in futs]
+            dist.barrier()
+            self.vllm_wake_up_time = time.time() - st
+
+    def _pre_learning(self):
+        if self.args.vllm_sleep:
+            # Let vLLM sleep before training.
+            st = time.time()
+            dist.barrier()
+            if self.strategy.is_rank_0():
+                futs = [actor.futures.sleep() for actor in self.actors]
+                _ = [fut.result() for fut in futs]
+            dist.barrier()
+            self.vllm_go_sleep_time = time.time() - st

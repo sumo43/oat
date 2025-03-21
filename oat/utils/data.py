@@ -60,11 +60,14 @@ def get_datasets(tokenizer, strategy, eval_only=False):
         )
     if args.eval_data:
         strategy.print(f"loading eval data {args.eval_data}")
-        if "@" in args.eval_data:
-            name, path = args.eval_data.split("@")
+        if os.path.exists(args.eval_data):
+            eval_dataset = datasets.load_from_disk(args.eval_data)
         else:
-            name, path = None, args.eval_data
-        eval_dataset = datasets.load_dataset(path, name, trust_remote_code=True)
+            if "@" in args.eval_data:
+                name, path = args.eval_data.split("@")
+            else:
+                name, path = None, args.eval_data
+            eval_dataset = datasets.load_dataset(path, name, trust_remote_code=True)
     else:
         # Share the same dataset but use different split.
         eval_dataset = prompt_dataset
@@ -224,23 +227,17 @@ class PromptDataset(Dataset):
                 )
             else:
                 prompt = data[input_key]
-            if get_reference:
-                return data[input_key], prompt, data[output_key]
-            return data[input_key], prompt
+            return data[input_key], prompt, data[output_key]
 
         for data in tqdm(dataset, disable=not self.strategy.is_rank_0()):
-            if get_reference:
-                prompt, processed_prompt, reference = preprocess_data(
-                    data, input_key, apply_chat_template
-                )
-                self.references.append(reference)
-            else:
-                prompt, processed_prompt = preprocess_data(
-                    data, input_key, apply_chat_template
-                )
+            prompt, processed_prompt, reference = preprocess_data(
+                data, input_key, apply_chat_template
+            )
             if len(tokenizer(processed_prompt)["input_ids"]) <= self.prompt_max_length:
                 self.processed_prompts.append(processed_prompt)
                 self.raw_prompts.append(prompt)
+                if self.get_reference:
+                    self.references.append(reference)
 
     def __len__(self):
         return len(self.raw_prompts)
@@ -415,6 +412,9 @@ class TrajectoryDataset(Dataset):
             desc="Constructing ppo dataset",
         ):
             trajectory_ids = list(buffer[i].prompt_ids) + list(buffer[i].response_ids)
+            # if tokenizer.eos_token_id not in trajectory_ids:
+            #     # TODO: clean up action_logprobs from actor side.
+            #     trajectory_ids.append(tokenizer.eos_token_id)
             self.trajectories.append(
                 {
                     "input_ids": torch.tensor(trajectory_ids),
