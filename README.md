@@ -68,27 +68,25 @@ Please refer to [Appendix C of our paper](https://arxiv.org/pdf/2411.01493#page=
 ## Citation
 If you find this codebase useful for your research, please consider citing:
 
-LLM online alignment framework:
-```
-@misc{
-  liu2025oat,
-  title={OAT: A research-friendly framework for LLM online alignment},
-  author={Zichen Liu and Changyu Chen and Chao Du and Wee Sun Lee and Min Lin},
-  howpublished={\url{https://github.com/sail-sg/oat}},
-  year={2025}
-}
-```
+- LLM online alignment framework:
+  ```bibtex
+  @misc{liu2025oat,
+    title={OAT: A research-friendly framework for LLM online alignment},
+    author={Liu, Zichen and Chen, Changyu and Du, Chao and Lee, Wee Sun and Lin, Min},
+    year={2024}
+    howpublished={\url{https://github.com/sail-sg/oat}},
+  }
+  ```
 
-Online exploration method:
-```
-@article{
-  liu2024sea,
-  title={Sample-Efficient Alignment for LLMs},
-  author={Zichen Liu and Changyu Chen and Chao Du and Wee Sun Lee and Min Lin},
-  journal={arXiv preprint arXiv:2411.01493},
-  year={2024}
-}
-```
+- Online exploration method:
+  ```bibtex
+  @article{liu2024sea,
+    title={Sample-Efficient Alignment for LLMs},
+    author={Liu, Zichen and Chen, Changyu and Du, Chao and Lee, Wee Sun and Lin, Min},
+    journal={arXiv preprint arXiv:2411.01493},
+    year={2024}
+  }
+  ```
 
 ## License
 
