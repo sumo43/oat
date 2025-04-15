@@ -70,7 +70,7 @@ If you find this codebase useful for your research, please consider citing:
 
 - LLM online alignment framework:
   ```bibtex
-  @misc{liu2025oat,
+  @misc{liu2024oat,
     title={OAT: A research-friendly framework for LLM online alignment},
     author={Liu, Zichen and Chen, Changyu and Du, Chao and Lee, Wee Sun and Lin, Min},
     year={2024}
