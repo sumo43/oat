@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from oat.oracles.gpt import GPTJudgeOracle
-from oat.oracles.gsm8k import GSM8KOracle
 from oat.oracles.pair import PairRMOracle
 from oat.oracles.remote.client import RemoteRMOracle
 
