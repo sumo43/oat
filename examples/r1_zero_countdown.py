@@ -21,8 +21,8 @@ from oat.oracles.countdown import CountdownOracle
 
 
 class ZeroMathActor(PPOActor):
-    def __init__(self, ipc_server, vllm_args, args: PPOArgs) -> None:
-        super().__init__(ipc_server, vllm_args, args)
+    def init(self, actor_id):
+        super().init(actor_id)
         if args.oracle == "countdown":
             self.oracle = CountdownOracle()
         else:

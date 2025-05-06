@@ -71,7 +71,7 @@ User: Using the numbers [79, 17, 60], create an equation that equals 36. You can
 We use the following command to RL-tune a `Qwen/Qwen2.5-3B` base model and observe R1-zero-like training curves within 3 hours training on 8 GPUs.
 
 ```
-python examples/r1_zero_math.py \
+python examples/r1_zero_countdown.py \
     --critic_type grpo \
     --gpus 8 \
     --vllm_gpu_ratio 0.7 \
