@@ -79,7 +79,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         # Init actors async.
         actor_init_futs = None
         if actors and strategy.is_rank_0():
-            actor_init_futs = [actor.futures.init() for actor in actors]
+            actor_init_futs = [actor.futures.init(i) for i, actor in enumerate(actors)]
 
         # ---------- Model related ----------
         # init policy model
@@ -276,6 +276,14 @@ class LearnerBase(abc.ABC, DistributedLauncher):
     def run(self):
         """Entry point of the entire program."""
         self._init(self.args, self.actors)
+
+        if self.args.resume_dir:
+            # Resume from previous training.
+            # 1) Model & training states
+            self.strategy.load_ckpt(
+                self.model.model, self.args.resume_dir, self.args.resume_tag
+            )
+            # 2) Dataset ... (TODO)
 
         self.steps = 0
         early_stop = False
@@ -484,6 +492,14 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 max_num=self.args.max_save_num,
                 max_mem=self.args.max_save_mem,
             )
+            if self.args.save_ckpt:
+                self.strategy.save_ckpt(
+                    self.model.model,
+                    os.path.join(self.save_path, "checkpoints"),
+                    tag="step_{:05d}".format(self.steps),
+                    max_num=self.args.max_save_num,
+                    max_mem=self.args.max_save_mem,
+                )
 
         # logs
         if eval_info or self.steps % self.args.logging_steps == 0:
@@ -516,25 +532,38 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 if self._wandb is not None:
                     self._wandb.log(logs_dict)
 
-    def evaluate(self, dataloader, steps):
-        self.strategy.print(f"Start generating evaluation responses at step {steps}")
-        st_time = time.time()
-
-        assert not self.pi_beta_lags_behind, "pi beta lags behind for evaluation"
-
-        # 1) Let Actors cache the current behavior policy.
+    def _pre_evaluate(self):
+        # Let Actors cache the current behavior policy.
         if self.strategy.is_rank_0():
             done = [
                 actor.futures.notify_eval_start(self.pi_beta_lags_behind)
                 for actor in self.actors
             ]
             _ = [d.result() for d in done]
+        dist.barrier()
 
-        # 2) Sync the latest policy to vLLM engines.
+        # Sync the latest policy to vLLM engines.
         if self.pi_beta_lags_behind:
             self._broadcast_to_vllm()
 
-        # 3) Generate and process results
+    def _post_evaluate(self):
+        # Recover Actors' original behavior policy.
+        if self.strategy.is_rank_0():
+            done = [
+                actor.futures.notify_eval_done(self.pi_beta_lags_behind)
+                for actor in self.actors
+            ]
+            _ = [d.result() for d in done]
+        dist.barrier()
+
+    def evaluate(self, dataloader, steps):
+        self.strategy.print(f"Start generating evaluation responses at step {steps}")
+        st_time = time.time()
+
+        assert not self.pi_beta_lags_behind, "pi beta lags behind for evaluation"
+        self._pre_evaluate()
+
+        # Generate and process results
         win_rate = 0
         scores = 0
         accuracy = 0
@@ -604,15 +633,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         response_len = self.strategy.broadcast(response_len)
         eval_count = self.strategy.broadcast(eval_count)
 
-        # 4) Recover Actors' original behavior policy.
-        if self.strategy.is_rank_0():
-            done = [
-                actor.futures.notify_eval_done(self.pi_beta_lags_behind)
-                for actor in self.actors
-            ]
-            _ = [d.result() for d in done]
-
-        dist.barrier()
+        self._post_evaluate()
         return {
             "eval/rm_win_rate": win_rate,
             "eval/score": scores,

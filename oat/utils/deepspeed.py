@@ -316,11 +316,13 @@ class DeepspeedStrategy(ABC):
         ret = []
         for arg in models_or_model_optim_pairs:
             if isinstance(arg, tuple):
+                # Prepare online model
                 assert (
                     len(arg) == 3
                 ), f'Expect (model, optimizer, scheduler) pair, got a tuple with size "{len(arg)}"'
                 ret.append(self._ds_init_train_model(*arg))
             else:
+                # Prepare reference model
                 ret.append(self._ds_init_eval_model(arg))
 
         return ret[0] if len(ret) == 1 else ret
@@ -364,7 +366,7 @@ class DeepspeedStrategy(ABC):
 
     def _ds_init_eval_model(self, model):
         is_wrapped = isinstance(model, LLM)
-        ds_config = self.get_ds_eval_config(offload=getattr(model, "_offload", False))
+        ds_config = self.get_ds_eval_config(offload=self.args.ref_offload)
 
         engine, *_ = deepspeed.initialize(
             model=model.model if is_wrapped else model,
@@ -656,41 +658,33 @@ class DeepspeedStrategy(ABC):
     ):
         assert isinstance(model, deepspeed.DeepSpeedEngine)
         if self.is_rank_0():
-            # Check and create the directory
-            if not os.path.exists(save_dir):
-                os.makedirs(save_dir, exist_ok=True)
-
-            # max hard drive space limit
-            MAX_SIZE = max_mem * 1024 * 1024 * 1024
+            os.makedirs(save_dir, exist_ok=True)
+            MAX_SIZE = max_mem * 1024**3  # Convert GB to bytes
 
             while True:
-                # Get all subdirectory and modification time
-                subdirs = [
-                    (
-                        os.path.join(save_dir, d),
-                        os.path.getmtime(os.path.join(save_dir, d)),
-                    )
-                    for d in os.listdir(save_dir)
-                    if os.path.isdir(os.path.join(save_dir, d))
-                ]
-                # Sort by modification time, oldest first
-                subdirs.sort(key=lambda x: x[1])
-                # Calculate the total size of all sub -directory
-                total_size = 0
-                for subdir, _ in subdirs:
-                    for dirpath, dirnames, filenames in os.walk(subdir):
-                        for f in filenames:
-                            fp = os.path.join(dirpath, f)
-                            total_size += os.path.getsize(fp)
+                subdirs = sorted(
+                    [
+                        (
+                            os.path.join(save_dir, d),
+                            os.path.getmtime(os.path.join(save_dir, d)),
+                        )
+                        for d in os.listdir(save_dir)
+                        if os.path.isdir(os.path.join(save_dir, d))
+                    ],
+                    key=lambda x: x[1],
+                )
+                total_size = sum(
+                    os.path.getsize(os.path.join(dirpath, f))
+                    for subdir, _ in subdirs
+                    for dirpath, _, filenames in os.walk(subdir)
+                    for f in filenames
+                )
 
-                # If the number of subdire directors is greater than equal to max_num or the total size is greater than max_mem, the oldest Checkpoint is deleted
                 if len(subdirs) >= max_num or total_size > MAX_SIZE:
-                    oldest_dir, _ = subdirs[0]  # The oldest directory
-                    if os.path.exists(oldest_dir):  # Ensure that the directory exists
-                        shutil.rmtree(oldest_dir)  # Delete directory
-                        self.print(
-                            f"Deleted oldest ckpt {oldest_dir}"
-                        )  # The standard print function is used here
+                    oldest_dir = subdirs[0][0]
+                    if os.path.exists(oldest_dir):
+                        shutil.rmtree(oldest_dir)
+                        self.print(f"Deleted oldest ckpt {oldest_dir}")
                 else:
                     break
 
@@ -710,8 +704,7 @@ class DeepspeedStrategy(ABC):
         load_module_only=False,
     ):
         assert isinstance(model, deepspeed.DeepSpeedEngine)
-        # basic ckpt: reuse deepspeed.DeepSpeedEngine.load_checkpoint
-        return model.load_checkpoint(
+        load_path, states = model.load_checkpoint(
             load_dir,
             tag,
             load_module_strict=load_module_strict,
@@ -719,6 +712,9 @@ class DeepspeedStrategy(ABC):
             load_lr_scheduler_states=load_lr_scheduler_states,
             load_module_only=load_module_only,
         )
+        if load_path is None:
+            raise RuntimeError(f"failed to resume from checkpoint {load_dir}")
+        return load_path, states
 
 
 class DummyStrategy:
