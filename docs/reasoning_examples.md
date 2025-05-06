@@ -37,7 +37,6 @@ python -m oat.experiment.run_ppo \
     --train_split train \
     --train_batch_size 64 \
     --train_batch_size_per_device 8 \
-    --mini_train_batch_size_per_device 8 \
     --rollout_batch_size 64 \
     --rollout_batch_size_per_device 8 \
     --pi_buffer_maxlen_per_device 64 \
@@ -107,7 +106,6 @@ python examples/r1_zero_countdown.py \
     --save_steps -1 \
     --train_batch_size 128 \
     --train_batch_size_per_device 2 \
-    --mini_train_batch_size_per_device 2 \
     --rollout_batch_size 128 \
     --rollout_batch_size_per_device 32 \
     --pi_buffer_maxlen_per_device 256 \
