@@ -30,8 +30,8 @@ class RewardActor(ActorBase):
     When the reward is a trained model from human preferences, this is also known as RLHF.
     """
 
-    def init(self, actor_id):
-        super().init(actor_id)
+    def init(self, actor_id, save_path):
+        super().init(actor_id, save_path)
         # Return the log prob because RL algos need it.
         self.sampling_params.logprobs = 1
 

@@ -31,8 +31,8 @@ class PreferenceActor(ActorBase):
     as preference-based reinforcement learning (PbRL) or contextual dueling bandit (CDB).
     """
 
-    def init(self, actor_id):
-        super().init(actor_id)
+    def init(self, actor_id, save_path):
+        super().init(actor_id, save_path)
         args = self.args
         assert (
             self.sampling_params.n >= 2

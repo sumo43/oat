@@ -553,9 +553,10 @@ class PPOLearner(RLLearner):
                     infos["reg_loss"] = reg_loss.detach()
                     loss += reg_loss
 
-                entropy = entropy_from_logits(logits[:, :-1])
-                entropy = masked_mean(entropy, mb_response_masks)
-                infos["entropy"] = entropy.detach()
+                with torch.no_grad():
+                    entropy = entropy_from_logits(logits[:, :-1])
+                    entropy = masked_mean(entropy, mb_response_masks)
+                    infos["entropy"] = entropy
 
                 self.strategy.backward(loss, self.model, self.optimizer)
 

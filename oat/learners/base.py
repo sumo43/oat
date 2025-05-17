@@ -76,10 +76,18 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         args, strategy = get_strategy(args)
         strategy.setup_distributed()
 
+        # Prepare workspace.
+        exp_name = args.wb_run_name + "_" + datetime.now().strftime("%m%dT%H:%M:%S")
+        self.save_path = os.path.join(args.save_path, exp_name)
+        if strategy.is_rank_0():
+            os.makedirs(self.save_path, exist_ok=True)
+
         # Init actors async.
         actor_init_futs = None
         if actors and strategy.is_rank_0():
-            actor_init_futs = [actor.futures.init(i) for i, actor in enumerate(actors)]
+            actor_init_futs = [
+                actor.futures.init(i, self.save_path) for i, actor in enumerate(actors)
+            ]
 
         # ---------- Model related ----------
         # init policy model
@@ -168,11 +176,6 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 )
         else:
             strategy.print("No actors or feedback collector in offline mode.")
-
-        exp_name = args.wb_run_name + "_" + datetime.now().strftime("%m%dT%H:%M:%S")
-        self.save_path = os.path.join(args.save_path, exp_name)
-        if strategy.is_rank_0():
-            os.makedirs(self.save_path, exist_ok=True)
 
         # logger
         self._wandb = None

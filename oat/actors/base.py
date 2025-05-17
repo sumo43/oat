@@ -40,8 +40,9 @@ class ActorBase(abc.ABC):
         self.ipc_server = ipc_server
         self.vllm_args = vllm_args
 
-    def init(self, actor_id):
+    def init(self, actor_id, save_path):
         self.actor_id = actor_id
+        self.save_path = save_path
         args = self.args
         # Measuring the **online** performance
         self.enable_online_evaluation = args.online_evaluation
