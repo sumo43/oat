@@ -76,6 +76,7 @@ class OATArgs:
         "SFT",
         "PPO",
     ] = "DPO"
+    sft_sum_loss: bool = False
     # Set 1 for truly online algorithms; large number for offline; intermediate value for iterative.
     sync_params_every: int = 1
     # Used in KL-regularized losses.
@@ -89,6 +90,12 @@ class OATArgs:
     # DPO + SFT loss coefficient.
     sft_weight: float = 0.0
     len_reg_alpha: float = 0.0
+    use_fused_lm_head: bool = True
+
+    # Dry run to test the maximum context length.
+    dry_run: bool = False
+    dry_run_prompt_len: int = 1024
+    dry_run_response_len: int = 1024
 
     # Oracle.
     oracle: str = "pairrm"
@@ -240,7 +247,7 @@ class OATArgs:
     # Skip the first evaluation.
     debug: bool = False
     # Random seed conditioned on time.
-    rnd_seed: bool = True
+    rnd_seed: bool = False
 
     # Weights and biases logging.
     use_wb: bool = False
@@ -291,4 +298,8 @@ def default_args_validation(args: OATArgs):
     assert (
         gpu_available >= args.gpus
     ), f"{gpu_available} GPUs available, but {args.gpus} required"
+    if args.use_fused_lm_head and args.zero_stage == 3:
+        raise ValueError(
+            "fused lm head is not supported for ZeRO-3, please set --no-use_fused_lm_head"
+        )
     return args
