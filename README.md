@@ -48,9 +48,18 @@ pip install vllm==0.8.4 && pip install -e .
 ```
 
 ##  Usage
-Please refer to [this file](https://github.com/sail-sg/understand-r1-zero/blob/main/train_zero_math.py) for a self-contained example showing how to implement Dr. GRPO for R1-Zero-like training with oat 🌾.
 
-Additionally, we also provide a guide on [online preference learning with active exploration](./docs/alignment_as_cdb.md).
+* R1-Zero-like training using Dr. GRPO for math reasoning: [a single-file self-contained implementation](./oat/experiment/run_math_rl.py).
+
+* Multi-turn SFT: [an example training script](./examples/multi_turn_sft.sh).
+
+* Online preference learning with active exploration: [a detailed guide](./docs/alignment_as_cdb.md).
+
+## Adopters
+Research projects that are built (or integrated) with Oat 🌾:
+* [Understanding R1-Zero-Like Training: A Critical Perspective](https://github.com/sail-sg/understand-r1-zero)
+* [VeriFree: Reinforcing General Reasoning without Verifiers](https://github.com/sail-sg/VeriFree)
+* [SPIRAL: Self-Play on Zero-Sum Games Incentivizes Reasoning via Multi-Agent Multi-Turn Reinforcement Learning](https://github.com/spiral-rl/spiral)
 
 <!-- ## Benchmarking
 The benchmarking compares oat with the online DPO implementation from [huggingface/trl](https://huggingface.co/docs/trl/main/en/online_dpo_trainer). Below, we outline the configurations used for oat and present the benchmarking results. Notably, oat 🌾 achieves up to **2.5x** computational efficiency compared to trl 🤗.
