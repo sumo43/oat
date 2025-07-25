@@ -20,11 +20,6 @@
 #   ...
 # ]
 
-cd /home/aiops/liuzc
-source ./.zshrc
-conda activate oat
-cd oat
-
 # Hyperparameter ---------------------------------------
 GPUS=4
 BATCH_SIZE=128

@@ -49,7 +49,7 @@ pip install vllm==0.8.4 && pip install -e .
 
 ##  Usage
 
-* R1-Zero-like training using Dr. GRPO for math reasoning: [a single-file self-contained implementation](./oat/experiment/run_math_rl.py).
+* R1-Zero-like training using Dr. GRPO for math reasoning: [a single-file self-contained implementation](./oat/experiment/run_math_rl.py) with [training script](./examples/math_rl.sh).
 
 * Multi-turn SFT: [an example training script](./examples/multi_turn_sft.sh).
 
