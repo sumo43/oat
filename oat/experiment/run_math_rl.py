@@ -198,7 +198,7 @@ class ZeroMathActor(PPOActor):
             self.sampling_params.stop_token_ids = None
             self.eval_sampling_params.stop = None
             self.eval_sampling_params.stop_token_ids = None
-        elif args.prompt_template == "r1":
+        elif args.prompt_template in ["r1"]:
             # Let's stop when the model completes its answer.
             self.sampling_params.stop = ["</answer>"]
             self.sampling_params.include_stop_str_in_output = True
